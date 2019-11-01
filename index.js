@@ -1,6 +1,6 @@
 "use strict";
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
-const token = "myverifytoken";
+const token = process.env.VERIFICATION_TOKEN;
 const request = require("request"),
   express = require("express"),
   body_parser = require("body-parser"),
