@@ -18,7 +18,7 @@ var db = mongoose.connect(
 
 app.listen(process.env.PORT || 1337, () => console.log("webhook is listening"));
 
-// webhook callbacks
+// Webhook from messenger page are handled here.
 app.post("/webhook", function(req, res) {
   if (req.body.object == "page") {
     req.body.entry.forEach(function(entry) {
@@ -37,7 +37,7 @@ app.post("/webhook", function(req, res) {
   }
 });
 
-// Connect webhook
+// Connect webhook to the script.
 app.get("/webhook/", function(req, res) {
   if (req.query["hub.verify_token"] === token) {
     console.log(req.query);
@@ -46,7 +46,7 @@ app.get("/webhook/", function(req, res) {
   res.send("Error, wrong token");
 });
 
-// Sends message to the user
+// Sends message to the user.
 function sendMessage(userId, message) {
   return new Promise(function(resolve, reject) {
     request(
@@ -61,8 +61,8 @@ function sendMessage(userId, message) {
       },
       err => {
         if (!err) {
-          resolve();
           console.log("message sent!");
+          resolve();
         } else {
           console.error("Unable to send message:" + err);
           reject(err);
@@ -72,6 +72,7 @@ function sendMessage(userId, message) {
   });
 }
 
+// Handle the first contact with the bot. Creates a user entry in Mongodb and start asking the user questions.
 function processPostback(event) {
   let userId = event.sender.id;
   let payload = event.postback.payload;
@@ -101,12 +102,14 @@ function processPostback(event) {
   }
 }
 
+// Create a user entry in MongoDB, resets the entry if userId already in the database.
 function createUser(userId, name) {
   let user = {
     userId: userId,
     name: name,
     profile: "https://www.facebook.com/profile?id=" + userId,
     found: false,
+    usersContacted: [userId],
     step: 1
   };
   User.update({ userId: userId }, user, { upsert: true }, err => {
@@ -118,24 +121,23 @@ function createUser(userId, name) {
       });
     } else {
       console.log("User successfuly created.");
-      // Find what the user wants once User created in Mongodb.
-      sendQuestion(userId, 1);
+      // Ask the first question.
+      sendQuestion(userId, user.usersContacted, 1);
     }
   });
 }
 
+// Handle messages from the user.
 function processMessage(event) {
   let userId = event.sender.id;
   let message = event.message;
-  // console.log(message);
 
   User.findOne({ userId: userId }, async function(err, user) {
-    // User found.
     if (!err) {
-      console.log(user);
-      // Message is from one of the quick replies.
+      // User found.
+      let { step, usersContacted } = user;
       if (message.text || message.quick_reply) {
-        let step = user.step;
+        // Message is correspond to an a field in MongoDB.
         let update;
         switch (step) {
           case 1:
@@ -158,9 +160,12 @@ function processMessage(event) {
             break;
           case 4:
             update = {
-              found: message.text === "Yes" ? true : false,
-              step: message.text === "Yes" ? ++step : step
+              found: message.text === "Yes" ? false : true,
+              step: message.text === "Yes" ? step : ++step
             };
+            break;
+          case 5:
+            step: ++step;
             break;
         }
         User.findOneAndUpdate(
@@ -173,14 +178,14 @@ function processMessage(event) {
             else console.log("User updated on step " + body.step);
           }
         );
-        sendQuestion(userId, step);
+        sendQuestion(userId, usersContacted, step);
       } else {
         message = {
           text: "Sorry I don't understand your answer."
         };
         await sendMessage(userId, message);
-        // Send the quick reply again.
-        sendQuestion(userId, user.step);
+        // Send the quick reply again if message was not one of the quick_reply option.
+        sendQuestion(userId, usersContacted, step);
       }
     } else {
       console.log("User not found.");
@@ -188,7 +193,8 @@ function processMessage(event) {
   });
 }
 
-function sendQuestion(userId, step) {
+// Handle which question to send to the user.
+async function sendQuestion(userId, usersContacted, step) {
   let message;
   switch (step) {
     case 1:
@@ -211,7 +217,8 @@ function sendQuestion(userId, step) {
       break;
     case 2:
       message = {
-        text: "Do you already have a project or are you looking to join one?",
+        text:
+          "Noted! Do you already have a project or are you looking to join one?",
         quick_replies: [
           {
             content_type: "text",
@@ -228,44 +235,87 @@ function sendQuestion(userId, step) {
       break;
     case 3:
       message = {
-        text: "Can you tell me more about what you would like to work on?"
+        text:
+          'Gotcha. Can you tell me more about what you would like to work on? something like:\n\n"I am looking to work on an awesome front end project!".'
       };
       break;
 
     case 4:
-      sendMessage(userId, { text: "Ok let me see if I can find someone..." });
-      findUser(userId);
+      await findUsers(userId, usersContacted);
+      message = {
+        text: "Wanna search for someone else?",
+        quick_replies: [
+          {
+            content_type: "text",
+            title: "Yes",
+            payload: "searchUser"
+          },
+          {
+            content_type: "text",
+            title: "No",
+            payload: "searchUser"
+          }
+        ]
+      };
+      break;
+    case 5:
+      message = {
+        text: "Thank you for using CS Bot!"
+      };
       break;
   }
   sendMessage(userId, message);
 }
 
-function findUser(userId) {
-  User.find(
-    {
-      userId: { $ne: userId },
-      canBeContacted: true,
-      hasProject: true
-    },
-    (err, users) => {
-      if (err) {
-        console.log("Error while updating user: " + err);
-      } else if (users.length > 0) {
-        // pick a random user.
-        let user = users[0];
-        let message = {
-          text:
-            user.name +
-            " says: '" +
-            user.aboutUser +
-            "', contact him here: " +
-            user.profile
-        };
-        sendMessage(userId, message);
-      } else {
-        console.log("No users found :(");
+// Find users to contact. Update the users that have already been contacted
+function findUsers(userId, usersContacted) {
+  console.log(usersContacted);
+  return new Promise(function(resolve, reject) {
+    User.find(
+      {
+        userId: { $nin: usersContacted },
+        canBeContacted: true,
+        hasProject: true
+      },
+      async (err, users) => {
+        if (err) {
+          console.log("Error while updating user: " + err);
+          reject(err);
+        } else if (users.length > 0) {
+          // pick a random user.
+          let user = users[0];
+          let message = {
+            text:
+              "I found someone looking to collaborate with you!\n" +
+              user.name +
+              " says: '" +
+              user.aboutUser +
+              "', contact him here:\n" +
+              user.profile
+          };
+          await sendMessage(userId, message);
+          usersContacted.push(user.userId);
+          User.findOneAndUpdate(
+            { userId: userId },
+            {
+              $set: { usersSeen: usersContacted }
+            },
+            (err, body) => {
+              if (err) console.log("Error while updating user: " + err);
+              else console.log("User updated on step " + body.step);
+            }
+          );
+          resolve();
+        } else {
+          let message = {
+            text:
+              "Sorry I couldn't find anyone :(. Check out awesome open source projects here:\n https://up-for-grabs.net/#/"
+          };
+          await sendMessage(userId, message);
+          resolve();
+        }
       }
-    }
-  );
+    );
+  });
 }
 

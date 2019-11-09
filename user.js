@@ -9,6 +9,7 @@ var userSchema = new Schema({
   canBeContacted: Boolean,
   hasProject: Boolean,
   aboutUser: String,
+  usersContacted: Array,
   step: Number
 });
 
