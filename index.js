@@ -269,7 +269,6 @@ async function sendQuestion(userId, usersContacted, step) {
 
 // Find users to contact. Update the users that have already been contacted
 function findUsers(userId, usersContacted) {
-  console.log(usersContacted);
   return new Promise(function(resolve, reject) {
     User.find(
       {
@@ -290,7 +289,7 @@ function findUsers(userId, usersContacted) {
               user.name +
               " says: '" +
               user.aboutUser +
-              "', contact him here:\n" +
+              "', contact him here:\n\n" +
               user.profile
           };
           await sendMessage(userId, message);
@@ -298,7 +297,7 @@ function findUsers(userId, usersContacted) {
           User.findOneAndUpdate(
             { userId: userId },
             {
-              $set: { usersSeen: usersContacted }
+              $set: { usersContacted: usersContacted }
             },
             (err, body) => {
               if (err) console.log("Error while updating user: " + err);
@@ -309,7 +308,7 @@ function findUsers(userId, usersContacted) {
         } else {
           let message = {
             text:
-              "Sorry I couldn't find anyone :(. Check out awesome open source projects here:\n https://up-for-grabs.net/#/"
+              "Sorry I couldn't find anyone :(. Check out awesome open source projects here:\n\nhttps://up-for-grabs.net/#/"
           };
           await sendMessage(userId, message);
           resolve();
@@ -318,4 +317,3 @@ function findUsers(userId, usersContacted) {
     );
   });
 }
-
